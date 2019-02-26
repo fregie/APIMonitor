@@ -1,7 +1,17 @@
 {
-  "apiKey": "your YunPian apikay",
-  "phones":["phone1", "phone2"],
-  "smsPrefix": "your yun pian sms prefix config",  
+  "YunPian":{
+    "enable": false,
+    "apiKey": "123456789",
+    "phones":["123456789"],
+    "smsPrefix": ""
+  },
+  "mail":{
+    "enable": true,
+    "username": "123456@qq.com",
+    "password": "password",
+    "smtp": "smtp.qq.com",
+    "to": ["xxxxxx@qq.com"]
+  }, 
   "testItem":[
     {
       "name":"api-test",
