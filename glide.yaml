@@ -1,5 +1,0 @@
-package: .
-import:
-- package: github.com/yunpian/yunpian-go-sdk
-  subpackages:
-  - sdk

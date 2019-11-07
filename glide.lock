@@ -1,8 +1,0 @@
-hash: cd9812468d71b8550db404dd6d4730e5d3f365a63c6de8cdd6a71fa094bec2a8
-updated: 2019-02-26T11:39:56.09159526+08:00
-imports:
-- name: github.com/yunpian/yunpian-go-sdk
-  version: 2193bf8a7459e8fcfb91d6383701c92b14d47c9d
-  subpackages:
-  - sdk
-testImports: []
