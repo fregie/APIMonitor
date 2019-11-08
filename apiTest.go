@@ -2,15 +2,18 @@ package main
 
 import (
 	"crypto/tls"
-	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/smtp"
-	"os"
 	"strings"
+	"sync"
 	"time"
+
+	"gopkg.in/yaml.v1"
 
 	ypclnt "github.com/yunpian/yunpian-go-sdk/sdk"
 )
@@ -18,40 +21,46 @@ import (
 var YP YunPianInfo
 var mailInfo MailInfo
 
-const configFile = "./config.json"
+var (
+	configFile = flag.String("c", "./config.yaml", "config file path")
+)
 
 type testItem struct {
-	Name           string            `json:"name"`
-	URL            string            `json:"url"`
-	HttpProto      string            `json:"httpProto"`
-	RequestTimeout string            `json:"requestTimeout"`
-	ServerList     map[string]string `jsong:"serverList"`
-	Interval       string            `json:"interval"`
+	Name           string            `yaml:"name"`
+	URL            string            `yaml:"url"`
+	HttpProto      string            `yaml:"httpProto"`
+	RequestTimeout string            `yaml:"requestTimeout"`
+	ServerList     map[string]string `yaml:"serverList"`
+	Interval       string            `yaml:"interval"`
+	AlertTimes     uint              `yaml:"alertTimes"`
+	Cert           string            `yaml:"cert"`
+	Key            string            `yaml:"key"`
 }
 
 type YunPianInfo struct {
-	Enable    bool     `json:"enable"`
-	APIKey    string   `json:"apiKey"`
-	Phones    []string `json:"phones"`
-	SmsPrefix string   `json:"smsPrefix"`
+	Enable    bool     `yaml:"enable"`
+	APIKey    string   `yaml:"apiKey"`
+	Phones    []string `yaml:"phones"`
+	SmsPrefix string   `yaml:"smsPrefix"`
 }
 
 type MailInfo struct {
-	Enable   bool     `json:"enable"`
-	Username string   `json:"username"`
-	Password string   `json:"password"`
-	Smtp     string   `json:"smtp"`
-	To       []string `json:"to"`
+	Enable   bool     `yaml:"enable"`
+	Username string   `yaml:"username"`
+	Password string   `yaml:"password"`
+	Smtp     string   `yaml:"smtp"`
+	To       []string `yaml:"to"`
 }
 
 type config struct {
-	MailInfo MailInfo    `json:"mail"`
-	YPInfo   YunPianInfo `json:"YunPian"`
-	TestItem []testItem  `json:"testItem"`
+	MailInfo MailInfo    `yaml:"mail"`
+	YPInfo   YunPianInfo `yaml:"YunPian"`
+	TestItem []testItem  `yaml:"testItem"`
 }
 
 func main() {
-	config := loadConfig(configFile)
+	flag.Parse()
+	config := loadConfig(*configFile)
 	YP = config.YPInfo
 	mailInfo = config.MailInfo
 
@@ -65,54 +74,63 @@ func main() {
 }
 
 func itemTest(item testItem) {
-	lastResult := map[string]bool{}
+	log.Printf("Start testing [%s]", item.Name)
+	lastResult := map[string]uint{}
+	rMutex := sync.Mutex{}
 
-	sig := make(chan int, 24)
-	num := 0
 	for {
+		wg := sync.WaitGroup{}
 		for ip, name := range item.ServerList {
-			num++
+			wg.Add(1)
 			go func(ip, name string) {
-				ok, err := testServer(ip, item.HttpProto, item.URL, item.RequestTimeout)
-				if _, ok := lastResult[name]; !ok {
-					lastResult[name] = true
+				// log.Printf("testing %s", ip)
+				ok, err := testServer(ip, item.HttpProto, item.URL, item.RequestTimeout, item.Cert, item.Key)
+				if _, ok := lastResult[ip]; !ok {
+					rMutex.Lock()
+					lastResult[ip] = 0
+					rMutex.Unlock()
 				}
 				if !ok {
-					fmt.Printf("[%s]: %s\n", name, err)
-					if lastResult[name] == true {
+					rMutex.Lock()
+					lastResult[ip]++
+					rMutex.Unlock()
+					log.Printf("[%s]: %s", name, err)
+					if lastResult[ip] == item.AlertTimes {
 						sendMSG(fmt.Sprintf("[%s](%s) 请求接口失败: %s", name, ip, err))
 						sendEmail(fmt.Sprintf("[%s](%s) 请求接口失败: %s", name, ip, err))
-						lastResult[name] = false
 					}
 				} else {
-					fmt.Printf("[%s]: OK\n", name)
-					if lastResult[name] == false {
+					log.Printf("[%s(%s)]: OK", name, ip)
+					if lastResult[ip] >= item.AlertTimes {
 						sendMSG(fmt.Sprintf("[%s](%s) 恢复正常", name, ip))
 						sendEmail(fmt.Sprintf("[%s](%s) 恢复正常", name, ip))
-						lastResult[name] = true
+						rMutex.Lock()
+						lastResult[ip] = 0
+						rMutex.Unlock()
 					}
 				}
-				sig <- 1
+				wg.Done()
 			}(ip, name)
 		}
-		for msg := range sig {
-			if msg == 1 {
-				num--
-				if num <= 0 {
-					break
-				}
-			}
-		}
+		wg.Wait()
 		t, _ := time.ParseDuration(item.Interval)
 		time.Sleep(t)
 	}
 }
 
-func testServer(serverIP, proto, url, requestTimeout string) (bool, error) {
+func testServer(serverIP, proto, url, requestTimeout, cert, key string) (bool, error) {
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: true,
 		},
+	}
+	if cert != "" && key != "" {
+		cert, err := tls.X509KeyPair([]byte(cert), []byte(key))
+		if err != nil {
+			panic("init cert failed")
+		}
+		certs := []tls.Certificate{cert}
+		tr.TLSClientConfig.Certificates = certs
 	}
 	timeout, _ := time.ParseDuration(requestTimeout)
 	client := &http.Client{Transport: tr, Timeout: timeout}
@@ -129,17 +147,6 @@ func testServer(serverIP, proto, url, requestTimeout string) (bool, error) {
 		return false, errors.New(fmt.Sprintf("status code(%d) not ok", resp.StatusCode))
 	}
 
-	// var f interface{}
-	// err2 := json.Unmarshal(body, &f)
-	// if err2 != nil {
-	// 	return false, err
-	// }
-	// rspMap := f.(map[string]interface{})
-	// if status, ok := rspMap["status"]; !ok || status.(string) == "fail" {
-	// 	return false, errors.New(rspMap["error"].(string))
-	// }
-
-	// fmt.Print(string(body))
 	return true, nil
 }
 
@@ -177,13 +184,15 @@ func sendMSG(msg string) {
 }
 
 func loadConfig(fileName string) *config {
-	file, _ := os.Open(fileName)
-	defer file.Close()
-	decoder := json.NewDecoder(file)
-	conf := new(config)
-	err := decoder.Decode(&conf)
+	data, err := ioutil.ReadFile(fileName)
 	if err != nil {
-		fmt.Println("Error:", err)
+		return nil
 	}
-	return conf
+	c := &config{}
+	err = yaml.Unmarshal(data, c)
+	if err != nil {
+		return nil
+	}
+
+	return c
 }
