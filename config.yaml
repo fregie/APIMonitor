@@ -1,0 +1,18 @@
+YunPian:
+  enable: true
+  apiKey: 123456789
+  phones:
+    - "123456789"
+  smsPrefix: "123456789"
+
+testItem:
+  - name: website
+    httpProto: https
+    crtVerify: true
+    requestTimeout: 15s
+    interval: 2m
+    alertTimes: 3
+    serverList:
+      www.tikvpn.com: "官网"
+      www.tran.sx: "官网"
+      www.tran.so: "官网"

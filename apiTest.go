@@ -33,6 +33,7 @@ type testItem struct {
 	ServerList     map[string]string `yaml:"serverList"`
 	Interval       string            `yaml:"interval"`
 	AlertTimes     uint              `yaml:"alertTimes"`
+	CertVerify     bool              `yaml:"crtVerify"`
 	Cert           string            `yaml:"cert"`
 	Key            string            `yaml:"key"`
 }
@@ -84,7 +85,7 @@ func itemTest(item testItem) {
 			wg.Add(1)
 			go func(ip, name string) {
 				// log.Printf("testing %s", ip)
-				ok, err := testServer(ip, item.HttpProto, item.URL, item.RequestTimeout, item.Cert, item.Key)
+				ok, err := testServer(ip, item.HttpProto, item.URL, item.RequestTimeout, item.Cert, item.Key, item.CertVerify)
 				if _, ok := lastResult[ip]; !ok {
 					rMutex.Lock()
 					lastResult[ip] = 0
@@ -96,6 +97,7 @@ func itemTest(item testItem) {
 					rMutex.Unlock()
 					log.Printf("[%s]: %s", name, err)
 					if lastResult[ip] == item.AlertTimes {
+						log.Printf("send")
 						sendMSG(fmt.Sprintf("[%s](%s) 请求接口失败: %s", name, ip, err))
 						sendEmail(fmt.Sprintf("[%s](%s) 请求接口失败: %s", name, ip, err))
 					}
@@ -118,10 +120,10 @@ func itemTest(item testItem) {
 	}
 }
 
-func testServer(serverIP, proto, url, requestTimeout, cert, key string) (bool, error) {
+func testServer(serverIP, proto, url, requestTimeout, cert, key string, certVerify bool) (bool, error) {
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: true,
+			InsecureSkipVerify: !certVerify,
 		},
 	}
 	if cert != "" && key != "" {
@@ -143,7 +145,7 @@ func testServer(serverIP, proto, url, requestTimeout, cert, key string) (bool, e
 	if err != nil {
 		return false, err
 	}
-	if resp.StatusCode >= 500 {
+	if resp.StatusCode >= 400 {
 		return false, errors.New(fmt.Sprintf("status code(%d) not ok", resp.StatusCode))
 	}
 
