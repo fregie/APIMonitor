@@ -149,6 +149,10 @@ func testServer(serverIP, proto, url, requestTimeout, cert, key string, certVeri
 		return false, errors.New(fmt.Sprintf("status code(%d) not ok", resp.StatusCode))
 	}
 
+	if resp.TLS.PeerCertificates[0].NotAfter.Unix()-time.Now().Unix() < 60*60*24*15 {
+		return false, errors.New(fmt.Sprintf("证书将在15天内到期"))
+	}
+
 	return true, nil
 }
 
